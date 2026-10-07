@@ -1,63 +1,64 @@
-![3](https://github.com/mounishvatti/pothole_detection_yolov8/assets/76279858/5e5a2ea1-c512-4c86-b0e6-b8128c997503)
+# 🛣️ RoadSense — City Road Condition Monitoring Platform
 
-<H1 align="center">Image Segmentation & Pothole Detection</H1>
+**RoadSense** is an enterprise-grade municipal road-condition monitoring platform designed for city road departments. It detects potholes and road damage in dashcam video using fine-tuned YOLOv8, tags detections with spatial GPS telemetry, and automates work order repair dispatch.
 
-## Google Colab File Link (A Single Click Solution)
-The google colab file link for yolov8 segmentation and tracking is provided below, you can check the implementation in Google Colab, and its a single click implementation
-,you just need to select the Run Time as GPU, and click on Run All.
+---
 
-[`Google Colab File`](https://colab.research.google.com/drive/17SLXw-wdHG2syQhLSHH5r5_rkZx5poo0)
+## 🏗️ Architecture & Stack
 
-## Tech stack
+- **Backend**: FastAPI + Ultralytics YOLOv8 + OpenCV + SQLite (SQLAlchemy).
+- **Frontend**: React + Vite + TypeScript + Tailwind CSS + Leaflet (`react-leaflet`) + Recharts.
+- **Serving**: Production React bundle compiled and served directly via FastAPI static mounts.
 
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+---
 
-## Object Segmentation and Tracking (ID + Trails)  using YOLOv8 on Custom Data
+## ⚡ Quick Start
 
-<h2>Clone the repository</h2>
-
+### 1. Installation
+Install Python dependencies:
 ```bash
-!git clone https://github.com/mounishvatti/pothole_detection_yolov8.git
+pip install -r requirements.txt
 ```
-<h2>Goto the cloned folder</h2>
 
+### 2. Run RoadSense Product
+Execute the unified single-command runner:
 ```bash
-cd pothole_detection_yolov8
-```
-<h2>Install the Dependencies</h2>
-
-```bash
-!pip install ultralytics
-```
-```bash
-!pip install roboflow
-```
-```bash
-!pip install fastapi kaleido python_multipart uvicorn
-```
-<h2>Importing YOLO and a roboflow workspace for Image Segmentation</h2>
-
-```python
-from roboflow import Roboflow
-rf = Roboflow(api_key="{the api key}")
-project = rf.workspace("{name of workspace}").project("name-of-project")
-dataset = project.version(1).download("yolov8")
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
-> [!NOTE]
-> If you are unable to perform the commands after importing the dataset from roboflow, you can access the same dataset by downloading it, upload it to your personal drive and mount the drive to your Google Colab 
+Open your browser at:  
+👉 **[http://localhost:8000](http://localhost:8000)**
 
-<h2>My roboflow workspace containing the pothole dataset</h2>
+---
 
-[`Roboflow Workspace`](https://app.roboflow.com/vit-76kid/pothole-detection-project-3yiqt/1)
+## 📁 Project Structure
 
-Run the code with mentioned command below.
-- For training the data
-```python
-!yolo task=detect mode=train model=yolov8m.pt data={dataset.location}/data.yaml epochs={number of epochs} imgsz=640
 ```
-- For yolov8 segmentation + Tracking & prediction
-```python
-!yolo task=detect mode=predict model={HOME}/runs/detect/train/weights/best.pt conf=0.25 source='/content/drive/MyDrive/demo.mp4'
+pothole_detection_yolov8/
+├── backend/
+│   ├── main.py            # FastAPI endpoints & static frontend serving
+│   ├── database.py        # SQLite SQLAlchemy ORM models
+│   ├── schemas.py         # Pydantic data schemas
+│   └── detector.py        # YOLOv8 inference, crop snapshots & GPS logic
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Navigation.tsx     # TopBar & Sidebar
+│   │   │   ├── Dashboard.tsx      # KPI cards, Leaflet map & frequency chart
+│   │   │   ├── Analyze.tsx        # Drag-and-drop video/image background processing
+│   │   │   ├── Issues.tsx         # Searchable, filterable table & bulk dispatch
+│   │   │   ├── WorkOrders.tsx     # Kanban board (Reported, Dispatched, In progress, Repaired)
+│   │   │   ├── SettingsView.tsx   # Model path, GPS mode & data management
+│   │   │   └── DetailDrawer.tsx   # Incident crop snapshot slideout drawer
+│   │   ├── App.tsx
+│   │   └── types.ts
+│   └── dist/              # Built frontend bundle
+│
+├── models/
+│   └── best.pt            # YOLOv8 model weights
+├── static/
+│   └── snapshots/         # Auto-saved cropped defect images
+├── requirements.txt
+└── README.md
 ```
-
