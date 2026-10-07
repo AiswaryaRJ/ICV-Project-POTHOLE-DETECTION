@@ -4,6 +4,7 @@ import tempfile
 import cv2
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from PIL import Image
 import streamlit as st
 import folium
@@ -12,6 +13,19 @@ from streamlit_folium import st_folium
 from detector import load_yolo_model, process_frame
 from gps import get_gps_for_frame
 from store import load_detections, save_detection, update_detection_status
+
+# ---- SAMPLE MEDIA PATHS ----
+SAMPLES_DIR = Path(__file__).parent.parent / "samples"
+SAMPLE_IMAGES_DIR = SAMPLES_DIR / "images"
+SAMPLE_VIDEO_PATH = SAMPLES_DIR / "videos" / "sample_dashcam.mp4"
+
+SAMPLE_IMAGE_META = {
+    "pothole_daytime_large.png":      {"label": "Large Pothole (Day)",       "icon": "☀️",  "severity": "High"},
+    "pothole_multiple_cracks.png":    {"label": "Multiple Cracks (Overcast)","icon": "🌥️", "severity": "High"},
+    "pothole_nighttime_rain.png":     {"label": "Rain-Filled Pothole (Night)","icon": "🌧️", "severity": "Medium"},
+    "pothole_highway_damage.png":     {"label": "Highway Road Damage",        "icon": "🛣️", "severity": "Medium"},
+    "pothole_intersection_severe.png":{"label": "Severe Intersection Damage", "icon": "🚦", "severity": "High"},
+}
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -276,33 +290,117 @@ elif page == "Live Detection":
                 st.error(f"Failed to read CSV: {e}")
                 
         st.info("📌 **Note:** GPS coordinates are assigned dynamically per frame. You can override with a custom CSV track.")
-        
+
+        st.markdown("---")
+        st.markdown("#### 🖼️ Sample Media Library")
+        st.caption("Use built-in demo assets — no upload needed!")
+
+        sample_file_path = None  # will be set if user picks a sample
+
+        # --- Sample Images ---
+        available_samples = []
+        if SAMPLE_IMAGES_DIR.exists():
+            available_samples = [f for f in sorted(SAMPLE_IMAGES_DIR.glob("*.png")) if f.name in SAMPLE_IMAGE_META]
+
+        if available_samples:
+            # Render thumbnail grid (2 columns)
+            thumb_cols = st.columns(2)
+            for i, img_path in enumerate(available_samples):
+                meta = SAMPLE_IMAGE_META[img_path.name]
+                with thumb_cols[i % 2]:
+                    try:
+                        pil_thumb = Image.open(img_path)
+                        pil_thumb.thumbnail((300, 200))
+                        st.image(pil_thumb, use_container_width=True)
+                    except Exception:
+                        pass
+                    if st.button(
+                        f"{meta['icon']} {meta['label']}",
+                        key=f"sample_img_{img_path.stem}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["sample_file_path"] = str(img_path)
+                        st.session_state["sample_type"] = "image"
+                        st.toast(f"Loaded: {meta['label']}", icon=meta['icon'])
+
+        # --- Sample Video ---
+        st.markdown("")
+        if SAMPLE_VIDEO_PATH.exists():
+            if st.button("🎬 Load Demo Dashcam Video (20s)", use_container_width=True):
+                st.session_state["sample_file_path"] = str(SAMPLE_VIDEO_PATH)
+                st.session_state["sample_type"] = "video"
+                st.toast("Loaded: Sample Dashcam Video", icon="🎬")
+
+        # Resolve active sample
+        if "sample_file_path" in st.session_state and st.session_state["sample_file_path"]:
+            sample_file_path = st.session_state["sample_file_path"]
+            sample_type = st.session_state.get("sample_type", "image")
+            st.success(f"Sample ready: `{Path(sample_file_path).name}` — press **Start Detection** to run.")
+
+        if st.button("✖ Clear Sample", key="clear_sample"):
+            st.session_state.pop("sample_file_path", None)
+            st.session_state.pop("sample_type", None)
+            sample_file_path = None
+
+        st.markdown("---")
+        st.markdown("#### 📤 Or Upload Your Own")
         uploaded_file = st.file_uploader("Upload Dashcam Media", type=["mp4", "avi", "mov", "jpg", "jpeg", "png"])
         run_btn = st.button("🚀 Start Detection Pipeline", use_container_width=True)
 
     with col_view:
         st.markdown("#### 🎥 Live Inference Output")
-        
-        if uploaded_file and run_btn:
+
+        # Resolve active media: uploaded file takes priority over sample
+        active_path = None
+        active_is_image = False
+        active_label = None
+
+        if uploaded_file:
+            active_label = uploaded_file.name
+            active_is_image = uploaded_file.name.split('.')[-1].lower() in ['jpg', 'jpeg', 'png']
+        elif sample_file_path and Path(sample_file_path).exists():
+            active_path = sample_file_path
+            active_label = Path(sample_file_path).name
+            active_is_image = st.session_state.get("sample_type", "image") == "image"
+
+        # Preview sample before running
+        if active_path and not uploaded_file:
+            if active_is_image:
+                st.image(active_path, caption=f"Preview: {active_label}", use_container_width=True)
+            else:
+                st.video(active_path)
+                st.caption(f"Preview: {active_label} — press Start Detection to run inference")
+
+        if (uploaded_file or active_path) and run_btn:
             if model is None:
                 st.error("Model engine is unavailable.")
             else:
-                is_image = uploaded_file.name.split('.')[-1].lower() in ['jpg', 'jpeg', 'png']
-                
-                if is_image:
-                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                    image = cv2.imdecode(file_bytes, 1)
-                    
+                if active_is_image:
+                    if uploaded_file:
+                        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                        image = cv2.imdecode(file_bytes, 1)
+                    else:
+                        image = cv2.imread(active_path)
+
                     t0 = time.time()
                     annotated, detections = process_frame(model, image, conf_thresh)
                     latency = (time.time() - t0) * 1000
                     fps = 1000.0 / latency if latency > 0 else 0
-                    
+
                     lat, lon, is_sim = get_gps_for_frame(0, 30, start_lat, start_lon, vehicle_speed, custom_gps_df)
-                    
+
                     st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
                     st.success(f"Processed image in **{latency:.1f} ms** (~**{fps:.1f} FPS**)")
-                    
+
+                    # Detection results table
+                    if detections:
+                        det_df = pd.DataFrame(detections)
+                        st.dataframe(
+                            det_df[["severity", "confidence"]].rename(columns={"severity": "Severity", "confidence": "Confidence"}),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
                     saved_count = 0
                     for d in detections:
                         res = save_detection(lat, lon, d["confidence"], d["severity"])
@@ -310,44 +408,61 @@ elif page == "Live Detection":
                             saved_count += 1
                     if saved_count > 0:
                         st.balloons()
-                        st.info(f"✅ Logged **{saved_count}** pothole defect(s) to Municipal Storage.")
-                        
+                        st.info(f"Logged **{saved_count}** defect(s) to Municipal Storage.")
+
                 else:
-                    tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                    tfile.write(uploaded_file.read())
-                    cap = cv2.VideoCapture(tfile.name)
-                    
-                    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                    # Video processing
+                    if uploaded_file:
+                        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                        tfile.write(uploaded_file.read())
+                        video_source = tfile.name
+                    else:
+                        video_source = active_path
+
+                    cap = cv2.VideoCapture(video_source)
+                    video_fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+                    total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
                     st_frame = st.empty()
                     st_metrics = st.empty()
-                    
+                    progress_bar = st.progress(0, text="Processing video...")
+
                     frame_idx = 0
                     total_detections_logged = 0
-                    
+
                     while cap.isOpened():
                         ret, frame = cap.read()
                         if not ret:
                             break
-                            
+
                         frame_idx += 1
                         t0 = time.time()
                         annotated, detections = process_frame(model, frame, conf_thresh)
                         proc_time = time.time() - t0
                         current_fps = 1.0 / proc_time if proc_time > 0 else 0
-                        
+
                         lat, lon, is_sim = get_gps_for_frame(frame_idx, video_fps, start_lat, start_lon, vehicle_speed, custom_gps_df)
-                        
+
                         for d in detections:
                             res = save_detection(lat, lon, d["confidence"], d["severity"])
                             if res:
                                 total_detections_logged += 1
-                                
+
                         st_frame.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
                         gps_tag = "Simulated Track" if is_sim else "Custom CSV Track"
-                        st_metrics.markdown(f"⚡ **Inference FPS:** `{current_fps:.1f}` | 📍 **Coordinates:** `{lat:.5f}, {lon:.5f}` (`{gps_tag}`) | 📝 **Logged:** `{total_detections_logged}`")
-                        
+                        st_metrics.markdown(
+                            f"⚡ **FPS:** `{current_fps:.1f}` | 📍 `{lat:.5f}, {lon:.5f}` ({gps_tag}) | 📝 Logged: `{total_detections_logged}`"
+                        )
+
+                        if total_video_frames > 0:
+                            progress_bar.progress(
+                                min(frame_idx / total_video_frames, 1.0),
+                                text=f"Frame {frame_idx}/{total_video_frames}"
+                            )
+
                     cap.release()
-                    st.success("🎉 Video stream processing complete!")
+                    progress_bar.progress(1.0, text="Complete!")
+                    st.success(f"Video processing complete! Logged **{total_detections_logged}** detections.")
 
 # --- PAGE 3: MUNICIPAL COMMAND CENTER ---
 elif page == "Municipal Command Center":
