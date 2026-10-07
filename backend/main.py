@@ -31,10 +31,19 @@ app.add_middleware(
 
 init_db()
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+STATIC_DIR = os.path.join(ROOT_DIR, "static")
+FRONTEND_DIST = os.path.join(ROOT_DIR, "static", "dist")
+SAMPLES_DIR = os.path.join(ROOT_DIR, "samples")
+
 os.makedirs(os.path.join(STATIC_DIR, "snapshots"), exist_ok=True)
 os.makedirs(os.path.join(STATIC_DIR, "proofs"), exist_ok=True)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Serve generated sample images & video
+if os.path.exists(SAMPLES_DIR):
+    app.mount("/samples", StaticFiles(directory=SAMPLES_DIR), name="samples")
 
 job_state = {
     "is_processing": False,
@@ -440,16 +449,43 @@ def get_job_status():
     global job_state
     return job_state
 
-FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+# ---------------------------------------------------------------------------
+# Serve the React SPA build (output of: cd frontend && npm run build)
+# Vite is configured to build into static/dist/
+# ---------------------------------------------------------------------------
+FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "dist")
 
 if os.path.exists(FRONTEND_DIST):
-    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+    # Serve Vite-generated assets (JS/CSS bundles)
+    _assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.exists(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="frontend_assets")
+
+    @app.get("/")
+    def serve_root():
+        """Serve React SPA index at root."""
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
     @app.get("/{full_path:path}")
-    def serve_frontend(full_path: str):
-        if full_path.startswith("api") or full_path.startswith("static"):
-            raise HTTPException(status_code=404, detail="Not found")
+    def serve_spa(full_path: str):
+        """SPA catch-all: return index.html for any non-API route."""
+        # Don't intercept API or static asset routes
+        for prefix in ("api", "static", "samples", "assets"):
+            if full_path.startswith(prefix):
+                raise HTTPException(status_code=404, detail="Not found")
+        # Try to serve exact file (favicons, manifest, etc.)
         file_path = os.path.join(FRONTEND_DIST, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
+        # Otherwise fall back to SPA index
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+else:
+    @app.get("/")
+    def serve_root_no_build():
+        """Friendly message when the React app hasn't been built yet."""
+        return {
+            "message": "RoadSense API is running. React frontend not built yet.",
+            "hint": "Run: cd frontend && npm run build",
+            "api_docs": "/docs"
+        }
+
